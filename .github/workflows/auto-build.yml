@@ -19,8 +19,8 @@ jobs:
     - name: 获取最后的tags 
       id: target-tag
       run: |
-        tag=$(curl -s https://api.github.com/repos/aseprite/aseprite/tags | jq -r '.[0].name')
-        # echo "::set-output name=tag::$tag"
+        tag=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          https://api.github.com/repos/aseprite/aseprite/tags | jq -r '.[0].name')
         echo "tag=$(echo $tag)" >> $GITHUB_OUTPUT
     - name: 获取本仓库最后的tags
       id: current-tag
