@@ -3,8 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'the tag(version) of the Aseprite'
+        description: 'the tag(version) of the Aseprite (e.g. v1.2.40 or v1.3-rc1)'
         required: true
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -13,24 +14,24 @@ jobs:
       matrix:
         os: [windows-latest]
         build_type: [Release]
-        enable_ui: [on]
-        include:
-          - os: windows-latest
-            build_type: Release
-            enable_ui: on
+
     steps:
 
     - name: 获得 Release 的 Body 与仓库名称
       id: get-content
       shell: bash
       run: |
-        body=$(curl -s https://api.github.com/repos/aseprite/aseprite/releases/tags/${{ github.event.inputs.tag_name }} | jq -r '.body')
-        echo "body-content=$(echo $body)" >> $GITHUB_OUTPUT 
-        echo $body
-        GITHUB_REPOSITORY="${{ github.repository }}"
-        REPO_NAME="${GITHUB_REPOSITORY#${{ github.repository_owner }}/}"
-        echo "repo-name=$(echo $REPO_NAME)" >> $GITHUB_OUTPUT 
-        echo $REPO_NAME
+        # 添加认证头防止 API 速率限制
+        body=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          https://api.github.com/repos/aseprite/aseprite/releases/tags/${{ github.event.inputs.tag_name }} | jq -r '.body')
+        # 安全输出多行内容到 GITHUB_OUTPUT
+        echo 'body-content<<EOF' >> $GITHUB_OUTPUT
+        echo "$body" >> $GITHUB_OUTPUT
+        echo 'EOF' >> $GITHUB_OUTPUT
+        echo "body: $body"
+        REPO_NAME="${{ github.event.repository.name }}"
+        echo "repo-name=$REPO_NAME" >> $GITHUB_OUTPUT
+        echo "repo name: $REPO_NAME"
 
     - uses: actions/checkout@v3
       with:
@@ -41,55 +42,53 @@ jobs:
     - uses: seanmiddleditch/gha-setup-ninja@master
     - uses: ilammy/msvc-dev-cmd@v1
 
+    - name: 选择正确的 Skia 版本
+      id: skia
+      shell: bash
+      run: |
+        TAG="${{ github.event.inputs.tag_name }}"
+        # 根据 Aseprite 版本选择对应的 Skia 预编译包
+        # 规则：v1.3 及之后的版本使用 m124，之前的用 m102
+        # 你可以根据实际发布情况扩展这个映射
+        if [[ "$TAG" =~ ^v1\.(3|[4-9]|[1-9][0-9]) ]]; then
+          echo "detected new version, using m124"
+          echo "url=https://github.com/aseprite/skia/releases/download/m124-1b7c7dc8c7/Skia-Windows-Release-x64.zip" >> $GITHUB_OUTPUT
+          echo "dir=./skia" >> $GITHUB_OUTPUT
+        else
+          echo "detected old version, using m102"
+          echo "url=https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip" >> $GITHUB_OUTPUT
+          echo "dir=./skia" >> $GITHUB_OUTPUT
+        fi
+
     - name: 获取 skia 并且生成 Makefile
       shell: bash
       run: |
-        if [[ "${{ runner.os }}" == "Windows" ]] ; then
-          export enable_ccache=off
-        else
-          export enable_ccache=on
-        fi
-        curl -L -o skia.zip https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip
-        7z x skia.zip -oskia
+        # 移除未使用的 ENABLE_UI 和 CCACHE 变量
+        curl -L -o skia.zip "${{ steps.skia.outputs.url }}"
+        7z x skia.zip -o"${{ steps.skia.outputs.dir }}"
         cmake -S . -B build -G Ninja \
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-          -DENABLE_UI=${{ matrix.enable_ui }} \
-          -DENABLE_CCACHE=$enable_ccache \
           -DLAF_BACKEND=skia \
-          -DSKIA_DIR=./skia \
-          -DSKIA_LIBRARY_DIR=./skia/out/Release-x64 \
-          -DSKIA_LIBRARY=./skia/out/Release-x64/skia.lib
+          -DSKIA_DIR="${{ steps.skia.outputs.dir }}" \
+          -DSKIA_LIBRARY_DIR="${{ steps.skia.outputs.dir }}/out/Release-x64" \
+          -DSKIA_LIBRARY="${{ steps.skia.outputs.dir }}/out/Release-x64/skia.lib"
 
     - name: 编译
       shell: bash
       run: |
         cd build && ninja
-    
+
     - name: 获取 "libcrypto-1_1-x64.dll"
-      shell: bash 
+      shell: bash
       run: |
-        GITHUB_REPOSITORY="${{ github.repository }}"
-        REPO_NAME="${GITHUB_REPOSITORY#${{ github.repository_owner }}/}"
-
-        curl -L -o D:/a/$REPO_NAME/$REPO_NAME/build/bin/libcrypto-1_1-x64.dll https://github.com/feenkcom/libopenssl/releases/download/v0.5.0/crypto-x86_64-pc-windows-msvc.dll
-    
-    # # 请确保是私有仓库再启用该功能
-    # - name: 上传文件到 artifact
-    #   uses: actions/upload-artifact@v3
-    #   with:
-    #     name: aseprite 
-    #     path: |
-    #       REPO_NAME=${{ steps.get-content.outputs.repo-name }}
-
-    #       D:/a/$REPO_NAME/$REPO_NAME/build/bin/data
-    #       D:/a/$REPO_NAME/$REPO_NAME/build/bin/aseprite.exe
-    #       D:/a/$REPO_NAME/$REPO_NAME/build/bin/libcrypto-1_1-x64.dll
+        REPO_NAME=${{ steps.get-content.outputs.repo-name }}
+        curl -L -o D:/a/$REPO_NAME/$REPO_NAME/build/bin/libcrypto-1_1-x64.dll \
+          https://github.com/feenkcom/libopenssl/releases/download/v0.5.0/crypto-x86_64-pc-windows-msvc.dll
 
     - name: 打包
       shell: bash
       run: |
         REPO_NAME=${{ steps.get-content.outputs.repo-name }}
-
         cd D:/a/$REPO_NAME/$REPO_NAME/build/bin/
         7z a -tzip aseprite.${{ github.event.inputs.tag_name }}.zip data aseprite.exe libcrypto-1_1-x64.dll
         cp aseprite.${{ github.event.inputs.tag_name }}.zip D:/a/
@@ -101,7 +100,7 @@ jobs:
         tag_name: ${{ github.event.inputs.tag_name }}
         name: Aseprite ${{ github.event.inputs.tag_name }}
         body: ${{ steps.get-content.outputs.body-content }}
-        draft: true # 为了遵守 Aseprite 的 EULA, 取消 draft 前请确保仓库为私有
+        draft: true  # 遵守 EULA，确认私有仓库后再取消 draft
         prerelease: false
         files: |
           D:/a/aseprite.${{ github.event.inputs.tag_name }}.zip
