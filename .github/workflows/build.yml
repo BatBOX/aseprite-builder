@@ -52,7 +52,7 @@ jobs:
         # 你可以根据实际发布情况扩展这个映射
         if [[ "$TAG" =~ ^v1\.(3|[4-9]|[1-9][0-9]) ]]; then
           echo "detected new version, using m124"
-          echo "url=https://github.com/aseprite/skia/releases/download/m124-1b7c7dc8c7/Skia-Windows-Release-x64.zip" >> $GITHUB_OUTPUT
+          echo "url=https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-Windows-Release-x64.zip" >> $GITHUB_OUTPUT
           echo "dir=./skia" >> $GITHUB_OUTPUT
         else
           echo "detected old version, using m102"
